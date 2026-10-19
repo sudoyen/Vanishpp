@@ -95,6 +95,8 @@ public class PlayerListener implements Listener {
         final UUID joinUuid = player.getUniqueId();
 
         plugin.playerNameCache.put(player.getName().toLowerCase(), joinUuid);
+        if (plugin.getProtocolLibManager() != null)
+            plugin.getProtocolLibManager().cachePlayer(player);
 
         // Apply pre-fetched DB vanish state immediately (no async round-trip needed).
         // preFetchedVanishState is populated by AsyncPlayerPreLoginEvent before this fires.
@@ -433,8 +435,10 @@ public class PlayerListener implements Listener {
         org.bukkit.permissions.PermissionAttachment att = invseeAttachments.remove(uuid);
         if (att != null) att.remove();
         plugin.cleanupPlayerCache(uuid);
-        if (plugin.getProtocolLibManager() != null)
+        if (plugin.getProtocolLibManager() != null) {
             plugin.getProtocolLibManager().clearObserverKnowledge(uuid);
+            plugin.getProtocolLibManager().uncachePlayer(player);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH)
