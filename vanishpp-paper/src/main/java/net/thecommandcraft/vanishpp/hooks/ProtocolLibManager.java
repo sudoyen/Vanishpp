@@ -255,7 +255,10 @@ public class ProtocolLibManager {
 
                         try {
                             PacketContainer packet = event.getPacket();
-                            List<PlayerInfoData> entries = packet.getPlayerInfoDataLists().read(0);
+                            // 1.19.3+ packets also have an EnumSet of actions before the entry
+                            // list, which this modifier matches too; the entries are always last
+                            int entriesIndex = packet.getPlayerInfoDataLists().size() - 1;
+                            List<PlayerInfoData> entries = packet.getPlayerInfoDataLists().read(entriesIndex);
                             if (entries == null || entries.isEmpty())
                                 return;
 
@@ -268,7 +271,7 @@ public class ProtocolLibManager {
                             if (result.cancel()) {
                                 event.setCancelled(true);
                             } else {
-                                packet.getPlayerInfoDataLists().write(0, result.kept());
+                                packet.getPlayerInfoDataLists().write(entriesIndex, result.kept());
                             }
                         } catch (Exception e) {
                             // Fail closed, same reasoning as the SCOREBOARD_TEAM scrub above -
