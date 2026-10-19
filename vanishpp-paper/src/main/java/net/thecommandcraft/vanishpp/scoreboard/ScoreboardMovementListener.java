@@ -5,7 +5,7 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketEvent;
 import net.thecommandcraft.vanishpp.Vanishpp;
-import org.bukkit.Bukkit;
+import net.thecommandcraft.vanishpp.utils.VanishScheduler;
 import org.bukkit.entity.Player;
 import org.bukkit.scoreboard.Scoreboard;
 
@@ -26,6 +26,8 @@ class ScoreboardMovementListener {
                                Map<UUID, Long> cooldowns,
                                long cooldownMs,
                                Consumer<Player> tickCallback) {
+        // PacketAdapter has its own plugin field, which shadows ours inside the adapter
+        VanishScheduler scheduler = plugin.getVanishScheduler();
         this.adapter = new PacketAdapter(plugin,
                 PacketType.Play.Client.POSITION,
                 PacketType.Play.Client.POSITION_LOOK) {
@@ -40,9 +42,9 @@ class ScoreboardMovementListener {
                 cooldowns.put(uuid, now);
 
                 Player player = event.getPlayer();
-                Bukkit.getScheduler().runTask(plugin, () -> {
+                scheduler.runEntity(player, () -> {
                     if (player.isOnline()) tickCallback.accept(player);
-                });
+                }, null);
             }
         };
         ProtocolLibrary.getProtocolManager().addPacketListener(this.adapter);
