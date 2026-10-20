@@ -1,6 +1,5 @@
 package net.thecommandcraft.vanishpp.scoreboard;
 
-import io.papermc.paper.scoreboard.numbers.NumberFormat;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
@@ -9,7 +8,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
-import org.bukkit.scoreboard.*;
 
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -18,16 +16,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class VanishScoreboard {
 
-    // 16 unique dummy entries — one per line slot.
-    // Actual text lives in team prefix so updating a line only sends UpdateTeams packet (no flicker).
-    private static final String[] ENTRIES = {
-        "§0", "§1", "§2", "§3", "§4", "§5", "§6", "§7",
-        "§8", "§9", "§a", "§b", "§c", "§d", "§e", "§f"
-    };
-
     private final Vanishpp plugin;
-    private final Map<UUID, Scoreboard> boards = new ConcurrentHashMap<>();
+    private final Map<UUID, Sidebar> boards = new ConcurrentHashMap<>();
     private final Set<UUID> manuallyHidden = ConcurrentHashMap.newKeySet();
+    private boolean warnedUnsupported = false;
 
     // Movement-triggered update state
     private final Map<UUID, Long> movementCooldowns = new ConcurrentHashMap<>();
@@ -66,7 +58,7 @@ public class VanishScoreboard {
         } else {
             manuallyHidden.remove(player.getUniqueId());
             show(player);
-            return true;
+            return isVisible(player);
         }
     }
 
@@ -78,23 +70,27 @@ public class VanishScoreboard {
         if (boards.containsKey(player.getUniqueId())) return;
         boolean wasEmpty = boards.isEmpty();
 
-        ScoreboardManager sm = Bukkit.getScoreboardManager();
-        Scoreboard sb = sm.getNewScoreboard();
+        Sidebar sidebar = createSidebar(player);
+        if (sidebar == null) return;
 
-        // Read the title from the language file
-        String title = plugin.getLanguageManager().getMessage("scoreboards.title");
-        Objective obj = sb.registerNewObjective("vanishpp", Criteria.DUMMY, parse(title));
-        obj.setDisplaySlot(DisplaySlot.SIDEBAR);
-
-        for (String entry : ENTRIES) {
-            Team team = sb.registerNewTeam("vpp_" + entry.charAt(1));
-            team.addEntry(entry);
-        }
-
-        boards.put(player.getUniqueId(), sb);
-        update(player, sb, obj);
-        player.setScoreboard(sb);
+        boards.put(player.getUniqueId(), sidebar);
+        render(player, sidebar);
         if (wasEmpty) startTimerTask(); // first board opened — start the timer
+    }
+
+    private Sidebar createSidebar(Player player) {
+        if (Bukkit.getPluginManager().isPluginEnabled("TAB") && TabSidebar.available())
+            return new TabSidebar(player.getUniqueId());
+        try {
+            return new BukkitSidebar(player);
+        } catch (UnsupportedOperationException e) {
+            if (!warnedUnsupported) {
+                warnedUnsupported = true;
+                plugin.getLogger().warning("This server does not support Bukkit scoreboards (Folia). "
+                        + "Enable the scoreboard feature in TAB's config.yml to use the vanish scoreboard.");
+            }
+            return null;
+        }
     }
 
     /**
@@ -109,15 +105,18 @@ public class VanishScoreboard {
         if (manuallyHidden.contains(player.getUniqueId())) return;
         if (!player.hasPermission("vanishpp.scoreboard")) return;
         if (player.hasPermission("vanishpp.scoreboard.bypass")) return;
-        boards.remove(player.getUniqueId());
-        show(player);
+        // Callers run on the global scheduler; rendering reads the player's world.
+        plugin.getVanishScheduler().runEntity(player, () -> {
+            boards.remove(player.getUniqueId());
+            show(player);
+        }, null);
     }
 
     public void hide(Player player) {
-        if (!boards.containsKey(player.getUniqueId())) return;
-        boards.remove(player.getUniqueId());
+        Sidebar sidebar = boards.remove(player.getUniqueId());
+        if (sidebar == null) return;
         movementCooldowns.remove(player.getUniqueId());
-        player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
+        sidebar.close();
         if (boards.isEmpty()) { taskEpoch++; timerRunning = false; } // last board closed — stop the timer
     }
 
@@ -146,7 +145,8 @@ public class VanishScoreboard {
             if (taskEpoch != myEpoch) return;
             for (UUID uuid : new ArrayList<>(boards.keySet())) {
                 Player p = Bukkit.getPlayer(uuid);
-                if (p != null && p.isOnline()) tick(p);
+                // On Folia the player's world may only be read from the player's own region thread.
+                if (p != null && p.isOnline()) plugin.getVanishScheduler().runEntity(p, () -> tick(p), null);
             }
         }, interval, interval);
     }
@@ -171,10 +171,9 @@ public class VanishScoreboard {
             movementListener.unregister();
             movementListener = null;
         }
-        for (UUID uuid : new ArrayList<>(boards.keySet())) {
-            Player p = Bukkit.getPlayer(uuid);
-            if (p != null && p.isOnline())
-                p.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
+        for (Map.Entry<UUID, Sidebar> entry : new ArrayList<>(boards.entrySet())) {
+            Player p = Bukkit.getPlayer(entry.getKey());
+            if (p != null && p.isOnline()) entry.getValue().close();
         }
         boards.clear();
         manuallyHidden.clear();
@@ -186,45 +185,21 @@ public class VanishScoreboard {
     // -------------------------------------------------------------------------
 
     private void tick(Player player) {
-        Scoreboard sb = boards.get(player.getUniqueId());
-        if (sb == null) return;
-        Objective obj = sb.getObjective("vanishpp");
-        if (obj != null) update(player, sb, obj);
+        Sidebar sidebar = boards.get(player.getUniqueId());
+        if (sidebar != null && player.isOnline()) render(player, sidebar);
     }
 
-    private void update(Player player, Scoreboard sb, Objective obj) {
+    private void render(Player player, Sidebar sidebar) {
         // Read title and line content from the language file
         String title = plugin.getLanguageManager().getMessage("scoreboards.title");
         List<String> rawLines = plugin.getLanguageManager().getStringList("scoreboards.lines");
         // Fall back to an empty list if the language file lacks the lines key (avoids NPE)
         if (rawLines == null) rawLines = Collections.emptyList();
 
-        obj.displayName(parse(title));
-
-        List<String> lines = padColumns(rawLines); // align | separators automatically
-        int maxLines = Math.min(lines.size(), ENTRIES.length);
-
-        for (int i = 0; i < ENTRIES.length; i++) {
-            String entry = ENTRIES[i];
-            Team team = sb.getTeam("vpp_" + entry.charAt(1));
-            if (team == null) continue;
-
-            if (i < maxLines) {
-                Component resolved = applyPlaceholders(player, lines.get(i));
-                team.prefix(resolved);
-                team.suffix(Component.empty());
-
-                Score score = obj.getScore(entry);
-                score.setScore(maxLines - i);
-                try {
-                    score.numberFormat(NumberFormat.blank()); // hide the score numbers entirely
-                } catch (Exception ignored) {
-                    // MockBukkit doesn't implement numberFormat() — gracefully degrade
-                }
-            } else {
-                sb.resetScores(entry);
-            }
-        }
+        List<Component> lines = new ArrayList<>();
+        for (String line : padColumns(rawLines)) // align | separators automatically
+            lines.add(applyPlaceholders(player, line));
+        sidebar.render(parse(title), lines);
     }
 
     /**
@@ -401,6 +376,11 @@ public class VanishScoreboard {
             Date now, SimpleDateFormat timeFmt, SimpleDateFormat dateFmt,
             SimpleDateFormat time12Fmt, SimpleDateFormat time12PaddedFmt,
             SimpleDateFormat time12AmpmFmt, SimpleDateFormat time12AmpmPaddedFmt) {
+        // Counting entities walks the whole world, so only do it when the line asks for it.
+        if (text.contains("%entities%"))
+            text = text.replace("%entities%", String.valueOf(player.getWorld().getEntityCount()));
+        if (text.contains("%chunks%"))
+            text = text.replace("%chunks%", String.valueOf(player.getWorld().getChunkCount()));
         return text
             // Coords & movement
             .replace("%x%",          String.valueOf(loc.getBlockX()))
@@ -427,8 +407,6 @@ public class VanishScoreboard {
             .replace("%vanished_count%", String.valueOf(plugin.getRawVanishedPlayers().size()))
             .replace("%memory_used%", memUsed + "MB")
             .replace("%memory_max%", memMax  + "MB")
-            .replace("%entities%",   String.valueOf(player.getWorld().getEntityCount()))
-            .replace("%chunks%",     String.valueOf(player.getWorld().getChunkCount()))
             // Time
             .replace("%time%",       timeFmt.format(now))
             .replace("%date%",       dateFmt.format(now))

@@ -12,6 +12,7 @@ public class TabPluginHook {
 
     private final Vanishpp plugin;
     private boolean enabled = false;
+    private boolean warnedNoNameTags = false;
 
     public TabPluginHook(Vanishpp plugin) {
         this.plugin = plugin;
@@ -45,6 +46,11 @@ public class TabPluginHook {
 
                 // Nametag prefix (above head) — TAB overrides scoreboard teams, so we must use its API
                 NameTagManager nameTagManager = api.getNameTagManager();
+                if (nameTagManager == null && !warnedNoNameTags) {
+                    warnedNoNameTags = true;
+                    plugin.getLogger().warning("TAB's nametag feature is disabled, so the vanish nametag prefix is not shown. "
+                            + "Enable scoreboard-teams in TAB's config.yml.");
+                }
                 if (nameTagManager != null) {
                     if (isVanished) {
                         String nametagPrefix = plugin.getConfigManager().vanishNametagPrefix;

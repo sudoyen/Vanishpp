@@ -35,7 +35,13 @@ public class VanishScoreboardCommand implements CommandExecutor {
             return true;
         }
 
+        boolean wasVisible = plugin.getVanishScoreboard().isVisible(player);
         boolean visible = plugin.getVanishScoreboard().toggle(player);
+        if (!wasVisible && !visible) {
+            plugin.getMessageManager().sendMessage(player,
+                    "<gray>The vanish scoreboard is <red>not available</red> on this server.");
+            return true;
+        }
         plugin.getMessageManager().sendMessage(player, visible
                 ? "<gray>Vanish scoreboard <green>enabled</green>."
                 : "<gray>Vanish scoreboard <red>disabled</red>.");

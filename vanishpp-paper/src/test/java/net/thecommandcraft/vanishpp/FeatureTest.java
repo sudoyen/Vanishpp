@@ -335,6 +335,18 @@ class FeatureTest {
     }
 
     @Test
+    void testScoreboard_toggle_showsAndHidesBukkitSidebar() {
+        var main = server.getScoreboardManager().getMainScoreboard();
+
+        assertTrue(plugin.getVanishScoreboard().toggle(player), "First toggle must show the scoreboard");
+        assertNotSame(main, player.getScoreboard(), "Player must be switched to the vanish sidebar");
+        assertNotNull(player.getScoreboard().getObjective("vanishpp"));
+
+        assertFalse(plugin.getVanishScoreboard().toggle(player), "Second toggle must hide the scoreboard");
+        assertSame(main, player.getScoreboard(), "Player must be back on the main scoreboard");
+    }
+
+    @Test
     void testScoreboard_config_autoShow_flag_readable() {
         plugin.getConfigManager().scoreboardAutoShow = true;
         assertTrue(plugin.getConfigManager().scoreboardAutoShow,
