@@ -7,7 +7,6 @@ import com.comphenix.protocol.events.PacketEvent;
 import net.thecommandcraft.vanishpp.Vanishpp;
 import net.thecommandcraft.vanishpp.utils.VanishScheduler;
 import org.bukkit.entity.Player;
-import org.bukkit.scoreboard.Scoreboard;
 
 import java.util.Map;
 import java.util.UUID;
@@ -22,7 +21,7 @@ class ScoreboardMovementListener {
     private final PacketAdapter adapter;
 
     ScoreboardMovementListener(Vanishpp plugin,
-                               Map<UUID, Scoreboard> boards,
+                               Map<UUID, ?> boards,
                                Map<UUID, Long> cooldowns,
                                long cooldownMs,
                                Consumer<Player> tickCallback) {
